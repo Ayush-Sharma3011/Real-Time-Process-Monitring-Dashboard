@@ -32,7 +32,7 @@ export interface ProcessInfo {
 
 export interface KillProcessResponse {
   success: boolean;
-  pid: number;
+  pid?: number;
   error?: string;
 }
 
@@ -44,31 +44,32 @@ const useSocket = () => {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [processList, setProcessList] = useState<ProcessInfo[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [receivedData, setReceivedData] = useState(false);
 
   useEffect(() => {
-    console.log('Initializing socket connection...');
+    console.log('Initializing socket connection to:', SERVER_URL);
     const newSocket = io(SERVER_URL, {
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       timeout: 20000,
       transports: ['websocket', 'polling']
     });
 
     newSocket.on('connect', () => {
-      console.log('Socket connected successfully');
+      console.log('Socket connected successfully with ID:', newSocket.id);
       setIsConnected(true);
       setConnectionError(null);
     });
 
     newSocket.on('connect_error', (error) => {
       console.error('Socket connection error:', error);
-      setConnectionError(error.message);
+      setConnectionError(`Connection Error: ${error.message}`);
       setIsConnected(false);
     });
 
     newSocket.on('disconnect', (reason) => {
-      console.log('Socket disconnected:', reason);
+      console.log('Socket disconnected, reason:', reason);
       setIsConnected(false);
     });
 
@@ -77,32 +78,48 @@ const useSocket = () => {
     });
 
     newSocket.on('systemInfo', (data) => {
-      console.log('Received system info:', data);
-      setSystemInfo(data);
+      console.log('Received system info:', data ? 'data available' : 'no data');
+      if (data) {
+        setSystemInfo(data);
+        setReceivedData(true);
+      }
     });
 
     newSocket.on('processList', (data) => {
-      console.log('Received process list:', data);
-      setProcessList(data);
+      console.log('Received process list:', Array.isArray(data) ? `${data.length} items` : 'invalid data');
+      if (Array.isArray(data) && data.length > 0) {
+        console.log('Sample process:', data[0]);
+        setProcessList(data);
+        setReceivedData(true);
+      }
     });
 
     newSocket.on('error', (error) => {
       console.error('Socket error:', error);
-      setConnectionError(error.message);
+      setConnectionError(`Server Error: ${error}`);
     });
 
     setSocket(newSocket);
 
+    // If we don't receive any data within 10 seconds, report an error
+    const dataTimeout = setTimeout(() => {
+      if (!receivedData) {
+        console.error('No data received within timeout period');
+        setConnectionError('No data received from server. Make sure the server is running with the right permissions.');
+      }
+    }, 10000);
+
     return () => {
       console.log('Cleaning up socket connection...');
+      clearTimeout(dataTimeout);
       newSocket.close();
     };
-  }, []);
+  }, [receivedData]);
 
   // Function to kill a process
   const killProcess = async (pid: number): Promise<KillProcessResponse> => {
     return new Promise((resolve) => {
-      if (!socket) {
+      if (!socket || !isConnected) {
         console.error('Socket not connected');
         resolve({ success: false, pid, error: 'Not connected to server' });
         return;

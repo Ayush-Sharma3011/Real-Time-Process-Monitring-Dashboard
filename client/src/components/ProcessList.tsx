@@ -11,26 +11,45 @@ interface Process {
 }
 
 const ProcessList: React.FC = () => {
-  const { processList, killProcess, connectionError } = useSocket();
+  const { processList, killProcess, isConnected, connectionError } = useSocket();
   const [sortField, setSortField] = useState<keyof Process>('cpu');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingTimeout, setLoadingTimeout] = useState<boolean>(false);
 
+  // Handle initial loading state
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoadingTimeout(true);
+    }, 10000);
+    
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Update loading state based on process list
   useEffect(() => {
     if (processList.length > 0) {
       setIsLoading(false);
       setError(null);
+      console.log('Process list loaded with', processList.length, 'processes');
     }
   }, [processList]);
 
+  // Handle connection errors
   useEffect(() => {
     if (connectionError) {
       setError(connectionError);
       setIsLoading(false);
+      console.error('Connection error:', connectionError);
     }
   }, [connectionError]);
+
+  // Update connection status
+  useEffect(() => {
+    console.log('Connection status:', isConnected ? 'Connected' : 'Disconnected');
+  }, [isConnected]);
 
   const handleSort = (field: keyof Process) => {
     if (field === sortField) {
@@ -95,30 +114,55 @@ const ProcessList: React.FC = () => {
         : bStr.localeCompare(aStr);
     });
 
+  // Show loading state
   if (isLoading) {
     return (
       <Container>
-        <LoadingMessage>Loading processes...</LoadingMessage>
+        <LoadingMessage>
+          {loadingTimeout 
+            ? "Still loading... Make sure the server is running with administrator privileges."
+            : "Loading processes..."}
+        </LoadingMessage>
+        {!isConnected && <ErrorMessage>Not connected to server. Check server status.</ErrorMessage>}
       </Container>
     );
   }
 
+  // Show error state
   if (error) {
     return (
       <Container>
         <ErrorMessage>{error}</ErrorMessage>
+        <TroubleshootingTips>
+          <h4>Troubleshooting Tips:</h4>
+          <ul>
+            <li>Make sure the server is running (npm run server)</li>
+            <li>Run the server with administrator privileges</li>
+            <li>Confirm the server is running on port 3001</li>
+            <li>Check network settings and firewall rules</li>
+          </ul>
+        </TroubleshootingTips>
       </Container>
     );
   }
 
   return (
     <Container>
+      <ConnectionStatus connected={isConnected}>
+        Status: {isConnected ? 'Connected' : 'Disconnected'}
+      </ConnectionStatus>
+      
       <SearchInput
         type="text"
         placeholder="Search processes..."
         value={searchTerm}
         onChange={(e) => setSearchTerm(e.target.value)}
       />
+      
+      <ProcessCount>
+        Showing {filteredAndSortedProcesses.length} of {processList.length} processes
+      </ProcessCount>
+      
       <Table>
         <thead>
           <tr>
@@ -141,21 +185,22 @@ const ProcessList: React.FC = () => {
           </tr>
         </thead>
         <tbody>
-          {filteredAndSortedProcesses.map((process: Process) => (
-            <tr key={process.pid}>
-              <td>{process.pid}</td>
-              <td>{process.name}</td>
-              <td>{process.cpu}%</td>
-              <td>{process.memory}%</td>
-              <td>{process.user}</td>
-              <td>
-                <KillButton onClick={() => handleKillProcess(process.pid)}>
-                  Kill
-                </KillButton>
-              </td>
-            </tr>
-          ))}
-          {filteredAndSortedProcesses.length === 0 && (
+          {filteredAndSortedProcesses.length > 0 ? (
+            filteredAndSortedProcesses.map((process: Process) => (
+              <tr key={process.pid}>
+                <td>{process.pid}</td>
+                <td>{process.name}</td>
+                <td>{process.cpu}%</td>
+                <td>{process.memory}%</td>
+                <td>{process.user}</td>
+                <td>
+                  <KillButton onClick={() => handleKillProcess(process.pid)}>
+                    Kill
+                  </KillButton>
+                </td>
+              </tr>
+            ))
+          ) : (
             <tr>
               <td colSpan={6} style={{ textAlign: 'center' }}>
                 No processes found
@@ -169,85 +214,125 @@ const ProcessList: React.FC = () => {
 };
 
 const Container = styled.div`
-  padding: 1rem;
-  background: #1e1e2e;
+  padding: 20px;
+  background-color: #1e1e2e;
   border-radius: 8px;
-  margin: 1rem;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-`;
-
-const LoadingMessage = styled.div`
-  text-align: center;
-  padding: 2rem;
-  color: #cdd6f4;
-  font-size: 1.1rem;
-`;
-
-const ErrorMessage = styled.div`
-  text-align: center;
-  padding: 2rem;
-  color: #f38ba8;
-  font-size: 1.1rem;
-  background: rgba(243, 139, 168, 0.1);
-  border-radius: 4px;
-  margin: 1rem;
-`;
-
-const SearchInput = styled.input`
-  width: 100%;
-  padding: 0.5rem;
-  margin-bottom: 1rem;
-  background: #313244;
-  border: 1px solid #45475a;
-  border-radius: 4px;
-  color: #cdd6f4;
-  font-size: 1rem;
-
-  &:focus {
-    outline: none;
-    border-color: #89b4fa;
-  }
 `;
 
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
+  margin-top: 20px;
   color: #cdd6f4;
-
+  
   th, td {
-    padding: 0.75rem;
+    padding: 12px 15px;
     text-align: left;
-    border-bottom: 1px solid #45475a;
+    border-bottom: 1px solid #313244;
   }
-
+  
   th {
-    background: #313244;
+    background-color: #181825;
+    font-weight: bold;
     cursor: pointer;
     user-select: none;
-    font-weight: 600;
-
+    
     &:hover {
-      background: #45475a;
+      background-color: #11111b;
     }
   }
-
+  
   tr:hover {
-    background: #313244;
+    background-color: #313244;
+  }
+`;
+
+const SearchInput = styled.input`
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 20px;
+  background-color: #313244;
+  border: none;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 16px;
+  
+  &:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #89b4fa;
+  }
+  
+  &::placeholder {
+    color: #6c7086;
   }
 `;
 
 const KillButton = styled.button`
-  padding: 0.25rem 0.75rem;
-  background: #f38ba8;
-  color: #1e1e2e;
+  background-color: #f38ba8;
+  color: #11111b;
   border: none;
   border-radius: 4px;
+  padding: 6px 12px;
   cursor: pointer;
-  font-weight: 600;
-  transition: background 0.2s;
-
+  font-weight: bold;
+  
   &:hover {
-    background: #f5c2e7;
+    background-color: #eb6f92;
+  }
+`;
+
+const LoadingMessage = styled.div`
+  text-align: center;
+  padding: 40px;
+  color: #cdd6f4;
+  font-size: 18px;
+`;
+
+const ErrorMessage = styled.div`
+  background-color: #f38ba8;
+  color: #11111b;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  font-weight: bold;
+`;
+
+const ConnectionStatus = styled.div<{ connected: boolean }>`
+  display: inline-block;
+  padding: 5px 10px;
+  margin-bottom: 20px;
+  border-radius: 4px;
+  background-color: ${props => props.connected ? '#a6e3a1' : '#f38ba8'};
+  color: #11111b;
+  font-weight: bold;
+`;
+
+const ProcessCount = styled.div`
+  margin-bottom: 10px;
+  color: #cdd6f4;
+  font-size: 14px;
+`;
+
+const TroubleshootingTips = styled.div`
+  background-color: #313244;
+  padding: 15px;
+  border-radius: 4px;
+  margin-top: 20px;
+  
+  h4 {
+    margin-top: 0;
+    color: #cdd6f4;
+  }
+  
+  ul {
+    margin: 0;
+    padding-left: 20px;
+    
+    li {
+      margin-bottom: 5px;
+      color: #bac2de;
+    }
   }
 `;
 
