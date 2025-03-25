@@ -73,18 +73,26 @@ const ProcessList: React.FC = () => {
           : b.pid - a.pid;
       }
       
-      const aNum = parseFloat(aValue);
-      const bNum = parseFloat(bValue);
+      // Convert values to strings for comparison
+      const aStr = String(aValue);
+      const bStr = String(bValue);
       
-      if (!isNaN(aNum) && !isNaN(bNum)) {
-        return sortDirection === 'asc' 
-          ? aNum - bNum 
-          : bNum - aNum;
+      // Try to parse as numbers for numeric fields
+      if (sortField === 'cpu' || sortField === 'memory') {
+        const aNum = parseFloat(aStr);
+        const bNum = parseFloat(bStr);
+        
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return sortDirection === 'asc' 
+            ? aNum - bNum 
+            : bNum - aNum;
+        }
       }
       
+      // Fallback to string comparison
       return sortDirection === 'asc'
-        ? aValue.localeCompare(bValue)
-        : bValue.localeCompare(aValue);
+        ? aStr.localeCompare(bStr)
+        : bStr.localeCompare(aStr);
     });
 
   if (isLoading) {

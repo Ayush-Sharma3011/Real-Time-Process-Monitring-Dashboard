@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 // Define types for the data
@@ -40,101 +40,95 @@ const SERVER_URL = 'http://127.0.0.1:3001';
 
 const useSocket = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [processList, setProcessList] = useState<ProcessInfo[]>([]);
-  const [connected, setConnected] = useState<boolean>(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('Initializing socket connection to:', SERVER_URL);
-    
-    // Initialize socket connection with additional options
-    const socketInstance = io(SERVER_URL, {
+    console.log('Initializing socket connection...');
+    const newSocket = io(SERVER_URL, {
+      reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      timeout: 10000
+      timeout: 20000,
+      transports: ['websocket', 'polling']
     });
-    
-    socketInstance.on('connect', () => {
-      setConnected(true);
+
+    newSocket.on('connect', () => {
+      console.log('Socket connected successfully');
+      setIsConnected(true);
       setConnectionError(null);
-      console.log('Connected to server with ID:', socketInstance.id);
     });
 
-    socketInstance.on('connect_error', (err) => {
-      console.error('Socket connection error:', err.message);
-      setConnectionError(`Connection error: ${err.message}`);
-      setConnected(false);
+    newSocket.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      setConnectionError(error.message);
+      setIsConnected(false);
     });
 
-    socketInstance.on('disconnect', (reason) => {
-      setConnected(false);
-      console.log('Disconnected from server, reason:', reason);
+    newSocket.on('disconnect', (reason) => {
+      console.log('Socket disconnected:', reason);
+      setIsConnected(false);
     });
 
-    // Debug event
-    socketInstance.on('ping', (data) => {
+    newSocket.on('ping', (data) => {
       console.log('Received ping from server:', data);
     });
 
-    // Receive system information
-    socketInstance.on('systemInfo', (data: SystemInfo) => {
-      console.log('Received systemInfo:', data.cpu.load, data.memory.usedPercent);
+    newSocket.on('systemInfo', (data) => {
+      console.log('Received system info:', data);
       setSystemInfo(data);
     });
 
-    // Receive process list
-    socketInstance.on('processList', (data: ProcessInfo[]) => {
-      console.log('Received processList, count:', data.length);
+    newSocket.on('processList', (data) => {
+      console.log('Received process list:', data);
       setProcessList(data);
     });
 
-    // Handle errors from server
-    socketInstance.on('error', (error: string) => {
-      console.error('Server error:', error);
-      setConnectionError(`Server error: ${error}`);
+    newSocket.on('error', (error) => {
+      console.error('Socket error:', error);
+      setConnectionError(error.message);
     });
 
-    setSocket(socketInstance);
+    setSocket(newSocket);
 
-    // Clean up on unmount
     return () => {
-      console.log('Cleaning up socket connection');
-      socketInstance.disconnect();
+      console.log('Cleaning up socket connection...');
+      newSocket.close();
     };
   }, []);
 
   // Function to kill a process
-  const killProcess = useCallback(async (pid: number): Promise<KillProcessResponse> => {
+  const killProcess = async (pid: number): Promise<KillProcessResponse> => {
     return new Promise((resolve) => {
-      if (socket && connected) {
-        console.log('Sending killProcess request for PID:', pid);
-        
-        // Set up a one-time event listener for the response
-        socket.once('killProcessResponse', (response: KillProcessResponse) => {
-          console.log('Received killProcessResponse:', response);
-          resolve(response);
-        });
-        
-        // Emit the kill process event
-        socket.emit('killProcess', pid);
-      } else {
-        const errorResponse = { 
-          success: false, 
-          pid, 
-          error: 'Socket not connected' 
-        };
-        console.error('Cannot kill process, socket not connected');
-        resolve(errorResponse);
+      if (!socket) {
+        console.error('Socket not connected');
+        resolve({ success: false, pid, error: 'Not connected to server' });
+        return;
       }
+
+      console.log('Sending kill request for process:', pid);
+      socket.emit('killProcess', pid);
+
+      const timeout = setTimeout(() => {
+        console.error('Kill process request timed out');
+        resolve({ success: false, pid, error: 'Request timed out' });
+      }, 5000);
+
+      socket.once('killProcessResponse', (response) => {
+        console.log('Received kill process response:', response);
+        clearTimeout(timeout);
+        resolve(response);
+      });
     });
-  }, [socket, connected]);
+  };
 
   return {
+    isConnected,
     systemInfo,
     processList,
     killProcess,
-    connected,
     connectionError
   };
 };
