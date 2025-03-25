@@ -1,0 +1,36 @@
+{
+  "name": "process-monitor-server",
+  "version": "1.0.0",
+  "description": "Server for Real-Time Process Monitoring Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "server": "nodemon server.js",
+    "client": "cd client && npm start",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install-client": "cd client && npm install",
+    "build-client": "cd client && npm run build",
+    "heroku-postbuild": "NPM_CONFIG_PRODUCTION=false npm install && npm run install-client && npm run build-client"
+  },
+  "keywords": [
+    "process",
+    "monitor",
+    "dashboard",
+    "system",
+    "information"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.17.3",
+    "socket.io": "^4.5.0",
+    "systeminformation": "^5.11.14"
+  },
+  "devDependencies": {
+    "concurrently": "^7.1.0",
+    "nodemon": "^2.0.15"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
