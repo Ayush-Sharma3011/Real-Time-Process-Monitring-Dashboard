@@ -34,9 +34,11 @@ export interface KillProcessResponse {
   success: boolean;
   pid?: number;
   error?: string;
+  message?: string;
 }
 
-const SERVER_URL = 'http://127.0.0.1:3001';
+// Use the same port as the server
+const SERVER_URL = 'http://localhost:3000';
 
 const useSocket = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -44,16 +46,15 @@ const useSocket = () => {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [processList, setProcessList] = useState<ProcessInfo[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [receivedData, setReceivedData] = useState(false);
+  const [killStatus, setKillStatus] = useState<{pid: number, status: string} | null>(null);
 
   useEffect(() => {
     console.log('Initializing socket connection to:', SERVER_URL);
+    
+    // Socket connection with basic options
     const newSocket = io(SERVER_URL, {
       reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-      timeout: 20000,
-      transports: ['websocket', 'polling']
+      timeout: 10000
     });
 
     newSocket.on('connect', () => {
@@ -74,24 +75,39 @@ const useSocket = () => {
     });
 
     newSocket.on('ping', (data) => {
-      console.log('Received ping from server:', data);
+      console.log('Received ping from server');
     });
 
     newSocket.on('systemInfo', (data) => {
-      console.log('Received system info:', data ? 'data available' : 'no data');
       if (data) {
         setSystemInfo(data);
-        setReceivedData(true);
       }
     });
 
     newSocket.on('processList', (data) => {
-      console.log('Received process list:', Array.isArray(data) ? `${data.length} items` : 'invalid data');
-      if (Array.isArray(data) && data.length > 0) {
-        console.log('Sample process:', data[0]);
+      if (Array.isArray(data)) {
         setProcessList(data);
-        setReceivedData(true);
       }
+    });
+    
+    // Add new event handlers for improved kill process flow
+    newSocket.on('killProcessAcknowledged', (data) => {
+      console.log('Kill request acknowledged for PID:', data.pid);
+      setKillStatus({pid: data.pid, status: 'Processing...'});
+    });
+
+    newSocket.on('killProcessResponse', (response) => {
+      console.log('Kill process response:', response);
+      if (response.success) {
+        setKillStatus({pid: response.pid || 0, status: 'Terminated successfully'});
+      } else {
+        setKillStatus({pid: response.pid || 0, status: `Failed: ${response.error || 'Unknown error'}`});
+      }
+      
+      // Clear the status after 3 seconds
+      setTimeout(() => {
+        setKillStatus(null);
+      }, 3000);
     });
 
     newSocket.on('error', (error) => {
@@ -101,20 +117,11 @@ const useSocket = () => {
 
     setSocket(newSocket);
 
-    // If we don't receive any data within 10 seconds, report an error
-    const dataTimeout = setTimeout(() => {
-      if (!receivedData) {
-        console.error('No data received within timeout period');
-        setConnectionError('No data received from server. Make sure the server is running with the right permissions.');
-      }
-    }, 10000);
-
     return () => {
-      console.log('Cleaning up socket connection...');
-      clearTimeout(dataTimeout);
-      newSocket.close();
+      console.log('Cleaning up socket connection');
+      newSocket.disconnect();
     };
-  }, [receivedData]);
+  }, []);
 
   // Function to kill a process
   const killProcess = async (pid: number): Promise<KillProcessResponse> => {
@@ -127,14 +134,17 @@ const useSocket = () => {
 
       console.log('Sending kill request for process:', pid);
       socket.emit('killProcess', pid);
+      
+      // Set immediate status
+      setKillStatus({pid, status: 'Request sent...'});
 
       const timeout = setTimeout(() => {
         console.error('Kill process request timed out');
+        setKillStatus({pid, status: 'Request timed out'});
         resolve({ success: false, pid, error: 'Request timed out' });
-      }, 5000);
+      }, 10000); // Increased timeout to 10 seconds
 
       socket.once('killProcessResponse', (response) => {
-        console.log('Received kill process response:', response);
         clearTimeout(timeout);
         resolve(response);
       });
@@ -146,7 +156,8 @@ const useSocket = () => {
     systemInfo,
     processList,
     killProcess,
-    connectionError
+    connectionError,
+    killStatus
   };
 };
 

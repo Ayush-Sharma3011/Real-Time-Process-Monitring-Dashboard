@@ -5,16 +5,21 @@ const si = require('systeminformation');
 const { exec } = require('child_process');
 const path = require('path');
 const os = require('os');
+const cors = require('cors');
 
 // Create Express app and HTTP server
 const app = express();
+// Enable CORS for all routes
+app.use(cors());
+
 const server = http.createServer(app);
 
 // Create Socket.IO server with CORS configuration
 const io = new Server(server, {
   cors: {
     origin: '*', // Allow all origins in development
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -40,14 +45,13 @@ si.processes().then(processes => {
   console.error('Error retrieving process list:', err);
 });
 
-// Serve static assets in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'client/build')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
-  });
-}
+// Serve static assets from client folder
+app.use(express.static(path.join(__dirname, 'client/build')));
+
+// For any other route, serve the React app
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
+});
 
 // Cache for process list and system info
 let processListCache = [];
@@ -56,17 +60,16 @@ let lastProcessListUpdate = 0;
 let lastSystemInfoUpdate = 0;
 
 // Update intervals (in milliseconds)
-const PROCESS_LIST_INTERVAL = 5000; // 5 seconds
-const SYSTEM_INFO_INTERVAL = 2000;  // 2 seconds
+const PROCESS_LIST_INTERVAL = 10000; // 10 seconds - increased to reduce CPU usage
+const SYSTEM_INFO_INTERVAL = 5000;   // 5 seconds
 
-// Function to get process list with proper error handling
+// Function to get process list - simplified
 const getProcessList = async () => {
   try {
-    console.log('Fetching process list from systeminformation...');
+    // Use the simpler process list call
     const processes = await si.processes();
-    console.log(`Retrieved ${processes.list.length} processes`);
     
-    // Format the process list to match the client's expected structure
+    // Format and limit to top 30 processes to improve performance
     const formattedProcesses = processes.list
       .filter(process => process && process.pid > 0)
       .map(process => ({
@@ -79,54 +82,31 @@ const getProcessList = async () => {
         user: process.user || 'Unknown'
       }))
       .sort((a, b) => parseFloat(b.cpu) - parseFloat(a.cpu))
-      .slice(0, 50); // Limit to top 50 processes
+      .slice(0, 30); // Reduced from 50 to 30 processes
       
-    console.log(`Formatted ${formattedProcesses.length} processes for client`);
     return formattedProcesses;
   } catch (error) {
     console.error('Error getting process list:', error);
-    
-    // Try fallback method
-    try {
-      console.log('Falling back to alternative method...');
-      if (process.platform === 'win32') {
-        const { stdout } = await execPromise('tasklist /FO CSV');
-        return parseWindowsTasklist(stdout);
-      } else {
-        const { stdout } = await execPromise('ps -eo pid,comm,%cpu,%mem,user --sort=-%cpu');
-        return parseUnixPS(stdout);
-      }
-    } catch (fallbackError) {
-      console.error('Fallback also failed:', fallbackError);
-      return [];
-    }
+    return [];
   }
 };
 
-// Function to get system info
+// Function to get system info - simplified
 const getSystemInfo = async () => {
   try {
-    console.log('Fetching system info...');
-    const [cpu, memory, currentLoad, cpuTemperature] = await Promise.all([
-      si.cpu(),
-      si.mem(),
-      si.currentLoad(),
-      si.cpuTemperature()
-    ]);
+    const memory = await si.mem();
+    const currentLoad = await si.currentLoad();
     
-    // Format CPU information
+    // Simplified CPU info
     const cpuInfo = {
-      manufacturer: cpu.manufacturer,
-      brand: cpu.brand,
-      speed: cpu.speed,
+      speed: currentLoad.currentLoad.toFixed(1),
       cores: currentLoad.cpus.map(core => ({
         load: core.load.toFixed(1)
-      })),
-      temperature: cpuTemperature.main || 'N/A',
+      })).slice(0, 4), // Limit to first 4 cores to reduce data size
       load: currentLoad.currentLoad.toFixed(1)
     };
     
-    // Format memory information
+    // Simplified memory info
     const memoryInfo = {
       total: memory.total,
       free: memory.free,
@@ -145,75 +125,120 @@ const getSystemInfo = async () => {
   }
 };
 
+// Improved function to kill a process with better error handling
+async function killProcessById(pid) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      console.log(`Attempting to kill process ${pid}...`);
+      
+      let command;
+      if (process.platform === 'win32') {
+        command = `taskkill /F /PID ${pid}`;
+      } else {
+        command = `kill -9 ${pid}`;
+      }
+      
+      console.log(`Executing command: ${command}`);
+      
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`Error killing process: ${error.message}`);
+          reject({
+            success: false,
+            message: error.message
+          });
+          return;
+        }
+        
+        if (stderr) {
+          console.warn(`Warning when killing process: ${stderr}`);
+        }
+        
+        console.log(`Process ${pid} killed successfully. Output: ${stdout}`);
+        resolve({
+          success: true,
+          message: `Process ${pid} terminated successfully`
+        });
+      });
+    } catch (error) {
+      console.error(`Exception killing process: ${error.message}`);
+      reject({
+        success: false,
+        message: error.message
+      });
+    }
+  });
+}
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   
   // Send cached data immediately if available
   if (processListCache.length > 0) {
-    console.log('Sending cached process list to new client');
     socket.emit('processList', processListCache);
   }
   if (systemInfoCache) {
-    console.log('Sending cached system info to new client');
     socket.emit('systemInfo', systemInfoCache);
   }
 
   // Send a ping to confirm connectivity
   socket.emit('ping', { time: new Date().toISOString() });
 
-  // Set up intervals for this client
-  const processListInterval = setInterval(async () => {
-    try {
-      const now = Date.now();
-      if (now - lastProcessListUpdate >= PROCESS_LIST_INTERVAL) {
+  // Set up a single interval for both updates to reduce overhead
+  const updateInterval = setInterval(async () => {
+    const now = Date.now();
+    
+    // Update process list if needed
+    if (now - lastProcessListUpdate >= PROCESS_LIST_INTERVAL) {
+      try {
         processListCache = await getProcessList();
         lastProcessListUpdate = now;
-        console.log(`Emitting updated process list with ${processListCache.length} processes`);
         socket.emit('processList', processListCache);
+      } catch (error) {
+        console.error('Error updating process list:', error);
       }
-    } catch (error) {
-      console.error('Error in process list interval:', error);
     }
-  }, 1000);
-
-  const systemInfoInterval = setInterval(async () => {
-    try {
-      const now = Date.now();
-      if (now - lastSystemInfoUpdate >= SYSTEM_INFO_INTERVAL) {
+    
+    // Update system info if needed
+    if (now - lastSystemInfoUpdate >= SYSTEM_INFO_INTERVAL) {
+      try {
         systemInfoCache = await getSystemInfo();
         lastSystemInfoUpdate = now;
         if (systemInfoCache) {
-          console.log('Emitting updated system info');
           socket.emit('systemInfo', systemInfoCache);
         }
+      } catch (error) {
+        console.error('Error updating system info:', error);
       }
-    } catch (error) {
-      console.error('Error in system info interval:', error);
     }
   }, 1000);
 
-  // Handle process kill requests
+  // Handle process kill requests with improved acknowledgment
   socket.on('killProcess', async (pid) => {
     console.log(`Received kill request for process ${pid}`);
+    
+    // Acknowledge receipt of the request immediately
+    socket.emit('killProcessAcknowledged', { pid });
+    
     try {
-      if (process.platform === 'win32') {
-        await execPromise(`taskkill /PID ${pid} /F`);
-      } else {
-        await execPromise(`kill -9 ${pid}`);
-      }
-      console.log(`Successfully killed process ${pid}`);
+      const result = await killProcessById(pid);
+      console.log(`Kill process result:`, result);
       
-      // Update process list immediately after killing
+      // Immediately update the process list after killing
       processListCache = await getProcessList();
       socket.emit('processList', processListCache);
-      socket.emit('killProcessResponse', { success: true, pid });
+      socket.emit('killProcessResponse', { 
+        success: true, 
+        pid,
+        message: result.message
+      });
     } catch (error) {
       console.error(`Error killing process ${pid}:`, error);
       socket.emit('killProcessResponse', { 
         success: false, 
         pid,
-        error: error.message 
+        error: error.message || 'Unknown error'
       });
     }
   });
@@ -221,87 +246,12 @@ io.on('connection', (socket) => {
   // Clean up on disconnect
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
-    clearInterval(processListInterval);
-    clearInterval(systemInfoInterval);
+    clearInterval(updateInterval);
   });
 });
 
-// Helper function to promisify exec
-function execPromise(command) {
-  return new Promise((resolve, reject) => {
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-  });
-}
-
-// Parse Windows tasklist output
-function parseWindowsTasklist(output) {
-  const lines = output.split('\n').filter(line => line.trim());
-  const processes = [];
-  
-  // Skip header line
-  for (let i = 1; i < lines.length; i++) {
-    try {
-      const match = lines[i].match(/"([^"]+)"/g);
-      if (match && match.length >= 2) {
-        const name = match[0].replace(/"/g, '');
-        const pid = parseInt(match[1].replace(/"/g, ''), 10);
-        
-        processes.push({
-          pid,
-          name,
-          cpu: '0.0',
-          memory: '0.0',
-          user: 'Unknown'
-        });
-      }
-    } catch (err) {
-      console.error('Error parsing tasklist line:', lines[i], err);
-    }
-  }
-  
-  return processes;
-}
-
-// Parse Unix ps output
-function parseUnixPS(output) {
-  const lines = output.split('\n').filter(line => line.trim());
-  const processes = [];
-  
-  // Skip header line
-  for (let i = 1; i < lines.length; i++) {
-    try {
-      const parts = lines[i].trim().split(/\s+/);
-      if (parts.length >= 5) {
-        const pid = parseInt(parts[0], 10);
-        const name = parts[1];
-        const cpu = parts[2];
-        const memory = parts[3];
-        const user = parts[4];
-        
-        processes.push({
-          pid,
-          name,
-          cpu,
-          memory,
-          user
-        });
-      }
-    } catch (err) {
-      console.error('Error parsing ps line:', lines[i], err);
-    }
-  }
-  
-  return processes;
-}
-
 // Set port and start server
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Connect to http://localhost:${PORT}`);

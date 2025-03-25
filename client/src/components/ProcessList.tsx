@@ -11,7 +11,7 @@ interface Process {
 }
 
 const ProcessList: React.FC = () => {
-  const { processList, killProcess, isConnected, connectionError } = useSocket();
+  const { processList, killProcess, isConnected, connectionError, killStatus } = useSocket();
   const [sortField, setSortField] = useState<keyof Process>('cpu');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [searchTerm, setSearchTerm] = useState('');
@@ -30,12 +30,15 @@ const ProcessList: React.FC = () => {
 
   // Update loading state based on process list
   useEffect(() => {
-    if (processList.length > 0) {
+    if (processList && processList.length > 0) {
       setIsLoading(false);
       setError(null);
       console.log('Process list loaded with', processList.length, 'processes');
+    } else if (isConnected && !isLoading) {
+      // We're connected but have no processes
+      console.log('Connected but no processes received');
     }
-  }, [processList]);
+  }, [processList, isConnected, isLoading]);
 
   // Handle connection errors
   useEffect(() => {
@@ -66,7 +69,10 @@ const ProcessList: React.FC = () => {
     }
 
     try {
+      console.log(`Attempting to kill process ${pid}...`);
       const response = await killProcess(pid);
+      console.log('Kill process response:', response);
+      
       if (!response.success) {
         setError(`Failed to kill process: ${response.error || 'Unknown error'}`);
       }
@@ -138,7 +144,7 @@ const ProcessList: React.FC = () => {
           <ul>
             <li>Make sure the server is running (npm run server)</li>
             <li>Run the server with administrator privileges</li>
-            <li>Confirm the server is running on port 3001</li>
+            <li>Confirm the server is running on port 3000</li>
             <li>Check network settings and firewall rules</li>
           </ul>
         </TroubleshootingTips>
@@ -162,6 +168,12 @@ const ProcessList: React.FC = () => {
       <ProcessCount>
         Showing {filteredAndSortedProcesses.length} of {processList.length} processes
       </ProcessCount>
+      
+      {killStatus && (
+        <KillStatus>
+          Process {killStatus.pid}: {killStatus.status}
+        </KillStatus>
+      )}
       
       <Table>
         <thead>
@@ -187,7 +199,7 @@ const ProcessList: React.FC = () => {
         <tbody>
           {filteredAndSortedProcesses.length > 0 ? (
             filteredAndSortedProcesses.map((process: Process) => (
-              <tr key={process.pid}>
+              <tr key={process.pid} className={killStatus && killStatus.pid === process.pid ? 'highlighted' : ''}>
                 <td>{process.pid}</td>
                 <td>{process.name}</td>
                 <td>{process.cpu}%</td>
@@ -245,6 +257,10 @@ const Table = styled.table`
   
   tr:hover {
     background-color: #313244;
+  }
+  
+  tr.highlighted {
+    background-color: rgba(249, 226, 175, 0.2);
   }
 `;
 
@@ -312,6 +328,15 @@ const ProcessCount = styled.div`
   margin-bottom: 10px;
   color: #cdd6f4;
   font-size: 14px;
+`;
+
+const KillStatus = styled.div`
+  background-color: #f9e2af;
+  color: #11111b;
+  padding: 8px 12px;
+  margin-bottom: 15px;
+  border-radius: 4px;
+  font-weight: bold;
 `;
 
 const TroubleshootingTips = styled.div`
