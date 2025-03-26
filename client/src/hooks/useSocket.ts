@@ -28,6 +28,7 @@ export interface ProcessInfo {
   cpu: string;
   memory: string;
   user: string;
+  killable?: boolean;
 }
 
 export interface KillProcessResponse {

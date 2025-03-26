@@ -17,7 +17,7 @@ const App: React.FC = () => {
         <ErrorBanner>
           {connectionError}
           <br />
-          Please make sure the server is running on port 3001
+          Please make sure the server is running on port 3000
         </ErrorBanner>
       )}
 

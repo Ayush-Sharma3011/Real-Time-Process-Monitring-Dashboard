@@ -36,18 +36,28 @@ const SystemInfo: React.FC<Props> = ({ systemInfo }) => {
   
   React.useEffect(() => {
     if (systemInfo) {
+      // Parse CPU load and ensure it's a valid number between 0-100
+      const cpuLoad = parseFloat(systemInfo.cpu.load);
+      const sanitizedCpuLoad = !isNaN(cpuLoad) && cpuLoad <= 100 ? cpuLoad : 
+                              (!isNaN(cpuLoad) ? Math.min(cpuLoad, 100) : 0);
+      
       // Update CPU history
       setCpuHistory(prev => {
-        const newHistory = [...prev, parseFloat(systemInfo.cpu.load)];
+        const newHistory = [...prev, sanitizedCpuLoad];
         if (newHistory.length > 30) {
           newHistory.shift();
         }
         return newHistory;
       });
       
+      // Parse memory percent and ensure it's a valid number between 0-100
+      const memPercent = parseFloat(systemInfo.memory.usedPercent);
+      const sanitizedMemPercent = !isNaN(memPercent) && memPercent <= 100 ? memPercent : 
+                                 (!isNaN(memPercent) ? Math.min(memPercent, 100) : 0);
+      
       // Update memory history
       setMemoryHistory(prev => {
-        const newHistory = [...prev, parseFloat(systemInfo.memory.usedPercent)];
+        const newHistory = [...prev, sanitizedMemPercent];
         if (newHistory.length > 30) {
           newHistory.shift();
         }
@@ -112,7 +122,12 @@ const SystemInfo: React.FC<Props> = ({ systemInfo }) => {
           <InfoGrid>
             <InfoCard>
               <CardTitle>CPU Usage</CardTitle>
-              <CardValue>{systemInfo.cpu.load}%</CardValue>
+              <CardValue>
+                {(() => {
+                  const cpuLoad = parseFloat(systemInfo.cpu.load);
+                  return !isNaN(cpuLoad) ? Math.min(cpuLoad, 100).toFixed(1) : '0.0';
+                })()}%
+              </CardValue>
               <ChartContainer>
                 <Line options={options} data={cpuData} />
               </ChartContainer>
@@ -120,7 +135,12 @@ const SystemInfo: React.FC<Props> = ({ systemInfo }) => {
             
             <InfoCard>
               <CardTitle>Memory Usage</CardTitle>
-              <CardValue>{systemInfo.memory.usedPercent}%</CardValue>
+              <CardValue>
+                {(() => {
+                  const memPercent = parseFloat(systemInfo.memory.usedPercent);
+                  return !isNaN(memPercent) ? Math.min(memPercent, 100).toFixed(1) : '0.0';
+                })()}%
+              </CardValue>
               <MemoryDetail>
                 {formatBytes(systemInfo.memory.used)} / {formatBytes(systemInfo.memory.total)}
               </MemoryDetail>
@@ -133,15 +153,22 @@ const SystemInfo: React.FC<Props> = ({ systemInfo }) => {
           <CoresContainer>
             <CardTitle>CPU Cores</CardTitle>
             <CoresGrid>
-              {systemInfo.cpu.cores.map((core, index) => (
-                <CoreCard key={index}>
-                  <CoreTitle>Core {index}</CoreTitle>
-                  <CoreValue>{core.load}%</CoreValue>
-                  <ProgressBar>
-                    <Progress width={parseFloat(core.load)} />
-                  </ProgressBar>
-                </CoreCard>
-              ))}
+              {systemInfo.cpu.cores.map((core, index) => {
+                // Ensure core load is a valid number between 0-100
+                const coreLoad = parseFloat(core.load);
+                const sanitizedCoreLoad = !isNaN(coreLoad) && coreLoad <= 100 ? coreLoad : 
+                                         (!isNaN(coreLoad) ? Math.min(coreLoad, 100) : 0);
+                
+                return (
+                  <CoreCard key={index}>
+                    <CoreTitle>Core {index}</CoreTitle>
+                    <CoreValue>{sanitizedCoreLoad.toFixed(1)}%</CoreValue>
+                    <ProgressBar>
+                      <Progress width={sanitizedCoreLoad} />
+                    </ProgressBar>
+                  </CoreCard>
+                );
+              })}
             </CoresGrid>
           </CoresContainer>
         </>

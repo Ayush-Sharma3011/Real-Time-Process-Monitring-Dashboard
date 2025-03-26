@@ -8,6 +8,7 @@ interface Process {
   cpu: string;
   memory: string;
   user: string;
+  killable?: boolean;
 }
 
 const ProcessList: React.FC = () => {
@@ -19,6 +20,7 @@ const ProcessList: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loadingTimeout, setLoadingTimeout] = useState<boolean>(false);
   const [selectedProcess, setSelectedProcess] = useState<Process | null>(null);
+  const [showKillableOnly, setShowKillableOnly] = useState<boolean>(false);
 
   // Handle initial loading state
   useEffect(() => {
@@ -100,9 +102,12 @@ const ProcessList: React.FC = () => {
 
   const filteredAndSortedProcesses = processList
     .filter((process: Process) => 
-      process.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      process.pid.toString().includes(searchTerm) ||
-      process.user.toLowerCase().includes(searchTerm.toLowerCase())
+      // Filter by search term
+      (process.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+       process.pid.toString().includes(searchTerm) ||
+       process.user.toLowerCase().includes(searchTerm.toLowerCase())) &&
+      // Filter by killable status if the option is enabled
+      (!showKillableOnly || process.killable)
     )
     .sort((a: Process, b: Process) => {
       const aValue = a[sortField];
@@ -136,6 +141,9 @@ const ProcessList: React.FC = () => {
         : bStr.localeCompare(aStr);
     });
 
+  // Count killable processes
+  const killableCount = processList.filter(process => process.killable).length;
+
   // Show loading state
   if (isLoading) {
     return (
@@ -168,6 +176,22 @@ const ProcessList: React.FC = () => {
     );
   }
 
+  // Show empty list message if connected but no processes
+  if (isConnected && (!processList || processList.length === 0)) {
+    return (
+      <Container>
+        <ConnectionStatus connected={isConnected}>
+          Status: Connected
+        </ConnectionStatus>
+        <div style={{ textAlign: 'center', margin: '40px 0', color: '#cdd6f4' }}>
+          No processes available. The server might be having trouble accessing process information.
+          <br /><br />
+          <strong>Please try running the server with administrator privileges.</strong>
+        </div>
+      </Container>
+    );
+  }
+
   return (
     <Container>
       <ConnectionStatus connected={isConnected}>
@@ -181,10 +205,24 @@ const ProcessList: React.FC = () => {
         onChange={(e) => setSearchTerm(e.target.value)}
       />
       
-      <ProcessCount>
-        Showing {filteredAndSortedProcesses.length} of {processList.length} processes
+      <ControlPanel>
+        <ProcessCount>
+          Showing {filteredAndSortedProcesses.length} of {processList.length} processes 
+          ({killableCount} killable)
+        </ProcessCount>
+        
+        <KillableFilter>
+          <input 
+            type="checkbox" 
+            id="showKillableOnly" 
+            checked={showKillableOnly}
+            onChange={() => setShowKillableOnly(!showKillableOnly)}
+          />
+          <label htmlFor="showKillableOnly">Show killable processes only</label>
+        </KillableFilter>
+        
         <ProcessTip>Click on a process to view details</ProcessTip>
-      </ProcessCount>
+      </ControlPanel>
       
       {killStatus && (
         <KillStatus>
@@ -210,6 +248,7 @@ const ProcessList: React.FC = () => {
             <th onClick={() => handleSort('user')}>
               User {sortField === 'user' && (sortDirection === 'asc' ? '↑' : '↓')}
             </th>
+            <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -218,7 +257,10 @@ const ProcessList: React.FC = () => {
             filteredAndSortedProcesses.map((process: Process) => (
               <tr 
                 key={process.pid} 
-                className={killStatus && killStatus.pid === process.pid ? 'highlighted' : ''}
+                className={`
+                  ${killStatus && killStatus.pid === process.pid ? 'highlighted' : ''}
+                  ${process.killable ? 'killable' : 'not-killable'}
+                `}
                 onClick={() => handleProcessClick(process)}
               >
                 <td>{process.pid}</td>
@@ -226,16 +268,27 @@ const ProcessList: React.FC = () => {
                 <td>{process.cpu}%</td>
                 <td>{process.memory}%</td>
                 <td>{process.user}</td>
+                <td>
+                  <KillableStatus killable={!!process.killable}>
+                    {process.killable ? 'Killable' : 'System Process'}
+                  </KillableStatus>
+                </td>
                 <td onClick={(e) => e.stopPropagation()}>
-                  <KillButton onClick={() => handleKillProcess(process.pid)}>
-                    Kill
-                  </KillButton>
+                  {process.killable ? (
+                    <KillButton onClick={() => handleKillProcess(process.pid)}>
+                      Kill
+                    </KillButton>
+                  ) : (
+                    <DisabledButton title="System processes cannot be killed">
+                      Kill
+                    </DisabledButton>
+                  )}
                 </td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={6} style={{ textAlign: 'center' }}>
+              <td colSpan={7} style={{ textAlign: 'center' }}>
                 No processes found
               </td>
             </tr>
@@ -277,9 +330,24 @@ const ProcessList: React.FC = () => {
               <DetailValue>{selectedProcess.user}</DetailValue>
             </DetailItem>
             
-            <KillButtonLarge onClick={() => handleKillProcess(selectedProcess.pid)}>
-              Terminate Process
-            </KillButtonLarge>
+            <DetailItem>
+              <DetailLabel>Status:</DetailLabel>
+              <DetailValue>
+                <KillableStatus killable={!!selectedProcess.killable}>
+                  {selectedProcess.killable ? 'Killable' : 'System Process (Cannot Be Killed)'}
+                </KillableStatus>
+              </DetailValue>
+            </DetailItem>
+            
+            {selectedProcess.killable ? (
+              <KillButtonLarge onClick={() => handleKillProcess(selectedProcess.pid)}>
+                Terminate Process
+              </KillButtonLarge>
+            ) : (
+              <DisabledButtonLarge title="System processes cannot be killed">
+                Cannot Terminate (System Process)
+              </DisabledButtonLarge>
+            )}
           </ModalContent>
         </ProcessDetailsModal>
       )}
@@ -328,6 +396,17 @@ const Table = styled.table`
   tr.highlighted {
     background-color: rgba(249, 226, 175, 0.2);
   }
+  
+  tr.killable {
+    /* Subtle highlight for killable processes */
+    &:hover {
+      background-color: rgba(166, 227, 161, 0.15);
+    }
+  }
+  
+  tr.not-killable {
+    opacity: 0.7;
+  }
 `;
 
 const SearchInput = styled.input`
@@ -364,6 +443,24 @@ const KillButton = styled.button`
   }
 `;
 
+const DisabledButton = styled.button`
+  background-color: #45475a;
+  color: #cdd6f4;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: not-allowed;
+  font-weight: bold;
+  opacity: 0.7;
+`;
+
+const DisabledButtonLarge = styled(DisabledButton)`
+  padding: 10px 15px;
+  font-size: 16px;
+  margin-top: 20px;
+  width: 100%;
+`;
+
 const KillButtonLarge = styled(KillButton)`
   padding: 10px 15px;
   font-size: 16px;
@@ -397,13 +494,31 @@ const ConnectionStatus = styled.div<{ connected: boolean }>`
   font-weight: bold;
 `;
 
-const ProcessCount = styled.div`
-  margin-bottom: 10px;
-  color: #cdd6f4;
-  font-size: 14px;
+const ControlPanel = styled.div`
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 15px;
+`;
+
+const ProcessCount = styled.div`
+  color: #cdd6f4;
+  font-size: 14px;
+`;
+
+const KillableFilter = styled.div`
+  display: flex;
+  align-items: center;
+  color: #cdd6f4;
+  
+  input {
+    margin-right: 8px;
+  }
+  
+  label {
+    cursor: pointer;
+  }
 `;
 
 const ProcessTip = styled.span`
@@ -418,6 +533,16 @@ const KillStatus = styled.div`
   margin-bottom: 15px;
   border-radius: 4px;
   font-weight: bold;
+`;
+
+const KillableStatus = styled.span<{ killable: boolean }>`
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  background-color: ${props => props.killable ? 'rgba(166, 227, 161, 0.2)' : 'rgba(243, 139, 168, 0.2)'};
+  color: ${props => props.killable ? '#a6e3a1' : '#f38ba8'};
 `;
 
 const TroubleshootingTips = styled.div`
