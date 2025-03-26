@@ -18,6 +18,7 @@ const ProcessList: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadingTimeout, setLoadingTimeout] = useState<boolean>(false);
+  const [selectedProcess, setSelectedProcess] = useState<Process | null>(null);
 
   // Handle initial loading state
   useEffect(() => {
@@ -54,6 +55,16 @@ const ProcessList: React.FC = () => {
     console.log('Connection status:', isConnected ? 'Connected' : 'Disconnected');
   }, [isConnected]);
 
+  // Handle process selection
+  const handleProcessClick = (process: Process) => {
+    setSelectedProcess(process);
+  };
+
+  // Close process details modal
+  const handleCloseDetails = () => {
+    setSelectedProcess(null);
+  };
+
   const handleSort = (field: keyof Process) => {
     if (field === sortField) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -72,6 +83,11 @@ const ProcessList: React.FC = () => {
       console.log(`Attempting to kill process ${pid}...`);
       const response = await killProcess(pid);
       console.log('Kill process response:', response);
+      
+      // Close process details if we just killed the selected process
+      if (selectedProcess && selectedProcess.pid === pid) {
+        setSelectedProcess(null);
+      }
       
       if (!response.success) {
         setError(`Failed to kill process: ${response.error || 'Unknown error'}`);
@@ -167,6 +183,7 @@ const ProcessList: React.FC = () => {
       
       <ProcessCount>
         Showing {filteredAndSortedProcesses.length} of {processList.length} processes
+        <ProcessTip>Click on a process to view details</ProcessTip>
       </ProcessCount>
       
       {killStatus && (
@@ -199,13 +216,17 @@ const ProcessList: React.FC = () => {
         <tbody>
           {filteredAndSortedProcesses.length > 0 ? (
             filteredAndSortedProcesses.map((process: Process) => (
-              <tr key={process.pid} className={killStatus && killStatus.pid === process.pid ? 'highlighted' : ''}>
+              <tr 
+                key={process.pid} 
+                className={killStatus && killStatus.pid === process.pid ? 'highlighted' : ''}
+                onClick={() => handleProcessClick(process)}
+              >
                 <td>{process.pid}</td>
                 <td>{process.name}</td>
                 <td>{process.cpu}%</td>
                 <td>{process.memory}%</td>
                 <td>{process.user}</td>
-                <td>
+                <td onClick={(e) => e.stopPropagation()}>
                   <KillButton onClick={() => handleKillProcess(process.pid)}>
                     Kill
                   </KillButton>
@@ -221,6 +242,47 @@ const ProcessList: React.FC = () => {
           )}
         </tbody>
       </Table>
+
+      {/* Process Details Modal */}
+      {selectedProcess && (
+        <ProcessDetailsModal>
+          <ModalContent>
+            <ModalHeader>
+              <h3>Process Details</h3>
+              <CloseButton onClick={handleCloseDetails}>&times;</CloseButton>
+            </ModalHeader>
+            
+            <DetailItem>
+              <DetailLabel>PID:</DetailLabel>
+              <DetailValue>{selectedProcess.pid}</DetailValue>
+            </DetailItem>
+            
+            <DetailItem>
+              <DetailLabel>Name:</DetailLabel>
+              <DetailValue>{selectedProcess.name}</DetailValue>
+            </DetailItem>
+            
+            <DetailItem>
+              <DetailLabel>CPU Usage:</DetailLabel>
+              <DetailValue>{selectedProcess.cpu}%</DetailValue>
+            </DetailItem>
+            
+            <DetailItem>
+              <DetailLabel>Memory Usage:</DetailLabel>
+              <DetailValue>{selectedProcess.memory}%</DetailValue>
+            </DetailItem>
+            
+            <DetailItem>
+              <DetailLabel>User:</DetailLabel>
+              <DetailValue>{selectedProcess.user}</DetailValue>
+            </DetailItem>
+            
+            <KillButtonLarge onClick={() => handleKillProcess(selectedProcess.pid)}>
+              Terminate Process
+            </KillButtonLarge>
+          </ModalContent>
+        </ProcessDetailsModal>
+      )}
     </Container>
   );
 };
@@ -255,8 +317,12 @@ const Table = styled.table`
     }
   }
   
-  tr:hover {
-    background-color: #313244;
+  tr {
+    cursor: pointer;
+    
+    &:hover {
+      background-color: #313244;
+    }
   }
   
   tr.highlighted {
@@ -298,6 +364,13 @@ const KillButton = styled.button`
   }
 `;
 
+const KillButtonLarge = styled(KillButton)`
+  padding: 10px 15px;
+  font-size: 16px;
+  margin-top: 20px;
+  width: 100%;
+`;
+
 const LoadingMessage = styled.div`
   text-align: center;
   padding: 40px;
@@ -328,6 +401,14 @@ const ProcessCount = styled.div`
   margin-bottom: 10px;
   color: #cdd6f4;
   font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+`;
+
+const ProcessTip = styled.span`
+  color: #89b4fa;
+  font-style: italic;
 `;
 
 const KillStatus = styled.div`
@@ -359,6 +440,71 @@ const TroubleshootingTips = styled.div`
       color: #bac2de;
     }
   }
+`;
+
+const ProcessDetailsModal = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+`;
+
+const ModalContent = styled.div`
+  background-color: #1e1e2e;
+  border-radius: 8px;
+  padding: 20px;
+  width: 400px;
+  max-width: 90%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+`;
+
+const ModalHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #313244;
+  padding-bottom: 10px;
+  
+  h3 {
+    margin: 0;
+    color: #cdd6f4;
+    font-size: 18px;
+  }
+`;
+
+const CloseButton = styled.button`
+  background: none;
+  border: none;
+  color: #cdd6f4;
+  font-size: 24px;
+  cursor: pointer;
+  
+  &:hover {
+    color: #f38ba8;
+  }
+`;
+
+const DetailItem = styled.div`
+  display: flex;
+  margin-bottom: 12px;
+`;
+
+const DetailLabel = styled.div`
+  flex: 0 0 120px;
+  font-weight: bold;
+  color: #89b4fa;
+`;
+
+const DetailValue = styled.div`
+  flex: 1;
+  color: #cdd6f4;
 `;
 
 export default ProcessList; 
